@@ -123,6 +123,21 @@
                 </div>
                 <div class="map-meta" id="mapMeta">No mission data yet.</div>
             </div>
+            <div class="room-controls" id="roomControls">
+                <div class="room-controls-header">
+                    <span class="room-controls-title">Rooms &amp; Zones</span>
+                    <button id="clearRoomsBtn" class="btn btn-secondary btn-compact" type="button">Clear Selection</button>
+                </div>
+                <div class="room-list" id="roomList">
+                    <div class="room-empty">No rooms discovered yet.</div>
+                </div>
+                <div class="room-staleness hidden" id="roomStaleness">Room metadata is out of date. Refreshing...</div>
+                <label class="room-order-option">
+                    <input type="checkbox" id="roomOrderToggle" checked>
+                    <span>Clean in selected order</span>
+                </label>
+                <button id="cleanRoomsBtn" class="btn btn-success" type="button" disabled>Clean Selected Areas</button>
+            </div>
         </section>
 
         <!-- Log Panel -->

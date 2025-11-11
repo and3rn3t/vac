@@ -8,6 +8,7 @@ Control your Roomba j9+ robot vacuum locally without iRobot cloud services. This
 
 - Start/Stop/Pause cleaning operations
 - Return to dock command
+- Targeted room/zone cleaning with custom labels (beta)
 - Real-time status monitoring
 - No cloud dependency
 
@@ -133,7 +134,8 @@ http://[server-ip]:3000
 1. **Discovery**: Click "Discover Roombas" to automatically find robots on your network
 2. **Connect**: Enter your Roomba's IP, BLID, and password, then click "Connect"
 3. **Control**: Use the control buttons to start cleaning, pause, stop, or return to dock
-4. **Monitor**: View real-time status updates including battery, position, and cleaning progress
+4. **Targeted Cleaning**: Select rooms/segments under *Rooms & Zones*, rename them for clarity, then launch a targeted clean when the button is enabled
+5. **Monitor**: View real-time status updates including battery, position, and cleaning progress
 
 ### API Endpoints
 
@@ -153,6 +155,7 @@ The server provides a REST API for programmatic control:
 - `POST /api/pause` - Pause cleaning
 - `POST /api/resume` - Resume cleaning
 - `POST /api/dock` - Return to dock
+- `POST /api/cleanRooms` - Start a targeted clean for specific rooms/segments (`regions` array required)
 
 #### Status
 
@@ -254,6 +257,9 @@ npm install
 
 # Start with auto-reload
 npm run dev
+
+# Run unit tests
+npm test
 ```
 
 ### Adding Features

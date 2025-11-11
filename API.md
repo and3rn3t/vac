@@ -203,9 +203,14 @@ GET /api/map?missionId=clean:42&maxPoints=1500
     "cycle": "clean",
     "nMssn": 42
   },
+  "mapId": "pmap123",
+  "regions": [
+    { "id": "kitchen", "type": "RID", "name": "Kitchen" },
+    { "id": "5", "type": "SEGMENT", "name": "Segment 5" }
+  ],
   "points": [
-    { "timestamp": 1699900000000, "x": -12, "y": 0, "theta": 90 },
-    { "timestamp": 1699900005000, "x": -6, "y": 18, "theta": 92 }
+    { "timestamp": 1699900000000, "x": -12, "y": 0, "theta": 90, "segmentId": "5", "regionId": "kitchen" },
+    { "timestamp": 1699900005000, "x": -6, "y": 18, "theta": 92, "segmentId": "5", "regionId": "kitchen" }
   ]
 }
 ```
@@ -214,6 +219,7 @@ GET /api/map?missionId=clean:42&maxPoints=1500
 
 - Raw telemetry samples are persisted in the local SQLite analytics database; make sure analytics is enabled.
 - The `points` array is downsampled to keep payloads lightweight while preserving the overall path shape.
+- `mapId` surfaces the persistent map identifier reported by the robot. `regions` lists discovered rooms/segments returned in telemetry so the UI can render overlays or targeted controls.
 - When no map data is available yet, the endpoint responds with `404 Not Found`.
 
 ---
@@ -407,6 +413,51 @@ POST /api/dock
   "message": "Returning to dock"
 }
 ```
+
+---
+
+### Clean Specific Rooms
+
+Start a targeted cleaning mission for one or more rooms or segments discovered in the mission map.
+
+```http
+POST /api/cleanRooms
+Content-Type: application/json
+
+{
+  "regions": [
+    { "region_id": "kitchen" },
+    "hallway"
+  ],
+  "ordered": true
+}
+```
+
+**Request Body:**
+
+- `regions` (required): Array of identifiers. Each entry can be a string (e.g. `"kitchen"`) or an object with `region_id`, optional `type`, and `params` for advanced firmware options.
+- `ordered` (optional): When `true` (default), the robot follows the submitted order. Set to `false` to let the robot choose the path.
+- `mapId` / `pmapId` (optional): Override the persistent map identifier. Defaults to the latest value tracked by the server.
+- `userPmapvId` (optional): Pass-through for user map version identifiers, as required by some firmware revisions.
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Targeted clean started",
+  "regions": [
+    { "region_id": "kitchen" },
+    "hallway"
+  ]
+}
+```
+
+**Notes:**
+
+- Robot must be connected and idle or paused to accept the command.
+- Region identifiers come from `/api/map` (`regions[].id`) and live state updates (`state.position.regionId`).
+- Errors from the robot (busy state, invalid region, etc.) are surfaced in the response.
 
 ---
 

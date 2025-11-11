@@ -366,6 +366,64 @@ app.get('/api/analytics/history', (req, res) => {
   }
 });
 
+// Targeted room cleaning
+app.post('/api/cleanRooms', async (req, res) => {
+  try {
+    if (!roombaClient || !roombaClient.connected) {
+      return res.status(400).json({ error: 'Not connected to Roomba' });
+    }
+
+    const body = req.body || {};
+    let regions = body.regions;
+
+    if (typeof regions === 'string') {
+      regions = [regions];
+    }
+
+    if (!Array.isArray(regions) || regions.length === 0) {
+      log('warn', 'Targeted clean request rejected: regions array missing or empty');
+      return res.status(400).json({ error: 'regions array is required' });
+    }
+
+    const options = {
+      regions,
+      ordered: body.ordered !== undefined ? !!body.ordered : true
+    };
+
+    if (body.mapId || body.pmapId) {
+      options.mapId = body.mapId || body.pmapId;
+    }
+
+    if (body.userPmapvId) {
+      options.userPmapvId = body.userPmapvId;
+    }
+
+    log('info', 'Targeted clean request received', {
+      regionCount: regions.length,
+      ordered: options.ordered,
+      explicitMapId: options.mapId ? true : false
+    });
+
+    await roombaClient.cleanRooms(options);
+
+    log('info', 'Targeted clean command dispatched', {
+      regionIds: regions.map((entry) => (typeof entry === 'object' && entry !== null
+        ? entry.region_id || entry.regionId || entry.id
+        : entry)),
+      ordered: options.ordered
+    });
+
+    return res.json({
+      success: true,
+      message: 'Targeted clean started',
+      regions: regions
+    });
+  } catch (error) {
+    log('error', 'Targeted clean failed:', error.message);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // Start cleaning
 app.post('/api/start', async (req, res) => {
   try {

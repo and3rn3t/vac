@@ -167,6 +167,11 @@ header h1 {
     color: white;
 }
 
+.btn-compact {
+    padding: 8px 14px;
+    font-size: 0.85em;
+}
+
 .btn-large {
     padding: 20px 30px;
     font-size: 1.1em;
@@ -356,6 +361,140 @@ header h1 {
     margin-top: 12px;
     font-size: 0.9em;
     color: #555;
+    text-align: center;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.room-controls {
+    margin-top: 16px;
+    padding: 16px;
+    background: #ffffff;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.room-controls-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.room-controls-title {
+    font-weight: 600;
+    color: #667eea;
+}
+
+.room-list {
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 6px;
+    background: #fdfdfd;
+}
+
+.room-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    transition: background 0.2s ease;
+}
+
+.room-item:hover {
+    background: #eef2ff;
+}
+
+.room-item.selected {
+    background: #e7f5ff;
+    border: 1px solid rgba(102, 126, 234, 0.35);
+}
+
+.room-item input[type="checkbox"] {
+    margin-right: 8px;
+}
+
+.room-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    color: #333;
+}
+
+.room-color-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.room-tag {
+    font-size: 0.75em;
+    background: #e9ecef;
+    color: #495057;
+    border-radius: 999px;
+    padding: 2px 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.room-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.room-rename-btn {
+    border: none;
+    background: none;
+    color: #667eea;
+    font-size: 0.8em;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.room-rename-btn:hover,
+.room-rename-btn:focus {
+    background: rgba(102, 126, 234, 0.12);
+    outline: none;
+}
+
+.room-empty {
+    padding: 12px;
+    text-align: center;
+    color: #6c757d;
+}
+
+.room-order-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+    color: #495057;
+}
+
+.room-order-option input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+}
+
+.room-staleness {
+    font-size: 0.85em;
+    color: #dc3545;
     text-align: center;
 }
 

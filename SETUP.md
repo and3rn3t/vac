@@ -145,6 +145,17 @@ Try the basic controls:
 - **Pause**: Should pause the current mission
 - **Stop**: Should stop and prepare to return home
 - **Return to Dock**: Should navigate back to charging base
+- **Targeted Clean**: Once a mission map has loaded, choose rooms under *Rooms & Zones* and start a focused clean. Use the rename option to label rooms for quick reference.
+
+## Step 9: Verify the Installation (Optional)
+
+Run the automated checks to ensure everything is wired correctly:
+
+```bash
+npm test
+```
+
+This exercises the targeted-clean payload builder so regressions are caught early.
 
 ## Common Setup Issues
 

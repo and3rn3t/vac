@@ -35,6 +35,15 @@ Complete feature list for the Roomba j9+ Local Control System.
 - Command history in activity log
 - Error handling and retry logic
 
+#### Room & Zone Cleaning
+
+- Clean specific rooms or segments straight from the web UI
+- Multi-select support with optional ordered execution
+- Color-coded map overlays highlight each selected area
+- Rename rooms locally with browser-persisted labels for quick selection
+- Automatic safeguards disable targeted cleans when map metadata is stale or unavailable
+- `/api/cleanRooms` endpoint for external integrations
+
 ### 📊 Status Monitoring
 
 #### Battery Information
@@ -65,7 +74,7 @@ Complete feature list for the Roomba j9+ Local Control System.
 - X/Y coordinates on map
 - Heading angle (theta)
 - Real-time position updates
-- Map snapshot rendering in web UI (beta)
+- Map snapshot rendering with color-coded room overlays (beta)
 
 ### � Analytics & Telemetry
 
@@ -215,10 +224,9 @@ Complete feature list for the Roomba j9+ Local Control System.
 
 ### Advanced Mapping
 
-- Visual map display
-- Room identification
-- Zone cleaning
-- No-go zones
+- Room boundary editing and manual labeling tools
+- User-defined no-go / keep-out zones
+- Historical mission comparison overlays
 
 ### Scheduling
 

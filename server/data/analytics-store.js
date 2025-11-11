@@ -79,8 +79,10 @@ class AnalyticsStore {
             mission_json,
             pose_x,
             pose_y,
-            pose_theta
-          ) VALUES (@timestamp, @battery_pct, @bin_full, @cleaning, @phase, @cycle, @mission_identifier, @mission_json, @pose_x, @pose_y, @pose_theta)`
+            pose_theta,
+            pose_segment,
+            pose_region
+          ) VALUES (@timestamp, @battery_pct, @bin_full, @cleaning, @phase, @cycle, @mission_identifier, @mission_json, @pose_x, @pose_y, @pose_theta, @pose_segment, @pose_region)`
       ),
       deleteOlderThan: this.db.prepare('DELETE FROM state_samples WHERE timestamp < @threshold'),
       selectRange: this.db.prepare(
@@ -107,10 +109,12 @@ class AnalyticsStore {
          WHERE mission_identifier = @missionId`
       ),
       selectMissionPath: this.db.prepare(
-        `SELECT timestamp,
-                pose_x AS x,
-                pose_y AS y,
-                pose_theta AS theta
+  `SELECT timestamp,
+    pose_x AS x,
+    pose_y AS y,
+    pose_theta AS theta,
+    pose_segment AS segmentId,
+    pose_region AS regionId
          FROM state_samples
          WHERE mission_identifier = @missionId
            AND pose_x IS NOT NULL
@@ -142,12 +146,17 @@ class AnalyticsStore {
         mission_json TEXT,
         pose_x REAL,
         pose_y REAL,
-        pose_theta REAL
+        pose_theta REAL,
+        pose_segment TEXT,
+        pose_region TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_state_samples_timestamp ON state_samples(timestamp);
       CREATE INDEX IF NOT EXISTS idx_state_samples_mission ON state_samples(mission_identifier);
     `);
+
+    this._ensureColumn('pose_segment', 'TEXT');
+    this._ensureColumn('pose_region', 'TEXT');
   }
 
   recordTelemetry(state) {
@@ -177,7 +186,9 @@ class AnalyticsStore {
       mission_json: missionJson,
       pose_x: state.position && Number.isFinite(state.position.x) ? state.position.x : null,
       pose_y: state.position && Number.isFinite(state.position.y) ? state.position.y : null,
-      pose_theta: state.position && Number.isFinite(state.position.theta) ? state.position.theta : null
+      pose_theta: state.position && Number.isFinite(state.position.theta) ? state.position.theta : null,
+      pose_segment: state.position && state.position.segmentId ? String(state.position.segmentId) : null,
+      pose_region: state.position && state.position.regionId ? String(state.position.regionId) : null
     };
 
     try {
@@ -190,6 +201,8 @@ class AnalyticsStore {
       // Logging is deferred to caller; swallow to avoid crashing telemetry pipeline
       if (process.env.LOG_LEVEL && process.env.LOG_LEVEL.toLowerCase() === 'debug') {
         console.error('AnalyticsStore insert failed:', error);
+      } else {
+        console.warn('AnalyticsStore insert failed:', error.message);
       }
     }
   }
@@ -436,6 +449,9 @@ class AnalyticsStore {
       boundsRow = latest;
     }
 
+    const missionDetails = this._getMissionDetails(missionId);
+    const mapId = this._extractMapId(missionDetails);
+
     const rows = this.statements.selectMissionPath.all({ missionId });
     if (!rows || rows.length === 0) {
       return {
@@ -445,7 +461,9 @@ class AnalyticsStore {
         sampleCount: 0,
         pointCount: 0,
         bounds: null,
-        mission: this._getMissionDetails(missionId),
+        mission: missionDetails,
+        mapId,
+        regions: this._normalizeRegions(missionDetails, []),
         points: []
       };
     }
@@ -460,7 +478,9 @@ class AnalyticsStore {
         sampleCount: rows.length,
         pointCount: 0,
         bounds: null,
-        mission: this._getMissionDetails(missionId),
+    mission: missionDetails,
+    mapId,
+        regions: this._normalizeRegions(missionDetails, []),
         points: []
       };
     }
@@ -482,6 +502,8 @@ class AnalyticsStore {
     const startedAt = boundsRow && boundsRow.startedAt ? boundsRow.startedAt : downsampled[0].timestamp || null;
     const endedAt = boundsRow && boundsRow.endedAt ? boundsRow.endedAt : downsampled[downsampled.length - 1].timestamp || null;
 
+    const regions = this._normalizeRegions(missionDetails, downsampled);
+
     return {
       missionId,
       startedAt,
@@ -494,14 +516,95 @@ class AnalyticsStore {
         minY,
         maxY
       },
-      mission: this._getMissionDetails(missionId),
+    mission: missionDetails,
+    mapId,
+      regions,
       points: downsampled.map((point) => ({
         timestamp: point.timestamp,
         x: point.x,
         y: point.y,
-        theta: Number.isFinite(point.theta) ? point.theta : null
+        theta: Number.isFinite(point.theta) ? point.theta : null,
+        segmentId: point.segmentId ?? null,
+        regionId: point.regionId ?? null
       }))
     };
+  }
+
+  _extractMapId(mission) {
+    if (!mission || typeof mission !== 'object') {
+      return null;
+    }
+
+    return (
+      mission.pmap_id ||
+      mission.pmapId ||
+      mission.mapId ||
+      (mission.lastCommand && (mission.lastCommand.pmap_id || mission.lastCommand.pmapId)) ||
+      null
+    );
+  }
+
+  _normalizeRegions(mission, points = []) {
+    const normalized = [];
+    const seen = new Set();
+
+    const addRegion = (region, defaults = {}) => {
+      if (!region || typeof region !== 'object') {
+        return;
+      }
+
+      const candidateId = region.region_id ?? region.regionId ?? region.id ?? defaults.id;
+      if (candidateId === undefined || candidateId === null) {
+        return;
+      }
+
+      const id = String(candidateId);
+      if (seen.has(id)) {
+        return;
+      }
+      seen.add(id);
+
+      normalized.push({
+        id,
+        type: region.type || defaults.type || 'rid',
+        name: region.name || region.label || defaults.name || `Region ${id}`,
+        params: region.params && typeof region.params === 'object' ? region.params : undefined
+      });
+    };
+
+    if (mission && typeof mission === 'object') {
+      if (Array.isArray(mission.regions)) {
+        mission.regions.forEach((region) => addRegion(region));
+      }
+
+      if (Array.isArray(mission.mapSegs)) {
+        mission.mapSegs.forEach((segment) => {
+          addRegion({}, { id: segment, type: 'segment' });
+        });
+      }
+    }
+
+    if (Array.isArray(points) && points.length) {
+      points.forEach((point) => {
+        const rawId = point.segmentId ?? point.regionId;
+        if (rawId === undefined || rawId === null) {
+          return;
+        }
+        addRegion({}, { id: rawId, type: 'segment' });
+      });
+    }
+
+    return normalized;
+  }
+
+  _ensureColumn(columnName, columnType) {
+    try {
+      this.db.exec(`ALTER TABLE state_samples ADD COLUMN ${columnName} ${columnType}`);
+    } catch (error) {
+      if (!/duplicate column name/i.test(error.message)) {
+        throw error;
+      }
+    }
   }
 
   _downsample(points, maxPoints) {

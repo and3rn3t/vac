@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
-    "test": "echo \"No tests yet\" && exit 0"
+  "test": "node --test"
   },
   "keywords": [
     "roomba",
