@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roomba Local Control</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Roomba j9+ Local Control</h1>
+            <p class="subtitle">Control your Roomba without cloud services</p>
+        </header>
+
+        <div class="status-panel">
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-indicator" id="statusIndicator"></span>
+                <span id="statusText">Not Connected</span>
+            </div>
+        </div>
+
+        <!-- Connection Panel -->
+        <section class="panel" id="connectionPanel">
+            <h2>Connection</h2>
+            <div class="form-group">
+                <button id="discoverBtn" class="btn btn-secondary">Discover Roombas</button>
+                <div id="discoveryResults" class="discovery-results"></div>
+            </div>
+            <div class="form-group">
+                <label for="ipInput">IP Address:</label>
+                <input type="text" id="ipInput" placeholder="192.168.1.100">
+            </div>
+            <div class="form-group">
+                <label for="blidInput">BLID (Robot ID):</label>
+                <input type="text" id="blidInput" placeholder="Robot BLID">
+            </div>
+            <div class="form-group">
+                <label for="passwordInput">Password:</label>
+                <input type="password" id="passwordInput" placeholder="Robot Password">
+            </div>
+            <div class="button-group">
+                <button id="connectBtn" class="btn btn-primary">Connect</button>
+                <button id="disconnectBtn" class="btn btn-danger" disabled>Disconnect</button>
+            </div>
+        </section>
+
+        <!-- Control Panel -->
+        <section class="panel" id="controlPanel">
+            <h2>Controls</h2>
+            <div class="control-grid">
+                <button id="startBtn" class="btn btn-success btn-large" disabled>
+                    <span class="icon">▶️</span>
+                    Start Cleaning
+                </button>
+                <button id="pauseBtn" class="btn btn-warning btn-large" disabled>
+                    <span class="icon">⏸️</span>
+                    Pause
+                </button>
+                <button id="stopBtn" class="btn btn-danger btn-large" disabled>
+                    <span class="icon">⏹️</span>
+                    Stop
+                </button>
+                <button id="dockBtn" class="btn btn-info btn-large" disabled>
+                    <span class="icon">🏠</span>
+                    Return to Dock
+                </button>
+            </div>
+        </section>
+
+        <!-- Status Panel -->
+        <section class="panel" id="statusPanel">
+            <h2>Robot Status</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-label">Battery</div>
+                    <div class="status-value" id="batteryLevel">--</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="batteryBar" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Cleaning Status</div>
+                    <div class="status-value" id="cleaningStatus">Idle</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Bin Status</div>
+                    <div class="status-value" id="binStatus">OK</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Position</div>
+                    <div class="status-value" id="position">x: 0, y: 0</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Sensor Data Panel -->
+        <section class="panel" id="sensorPanel">
+            <h2>Sensor Data</h2>
+            <div class="sensor-display">
+                <div class="sensor-item">
+                    <span class="sensor-label">Mission Progress:</span>
+                    <span class="sensor-value" id="missionProgress">--</span>
+                </div>
+                <div class="sensor-item">
+                    <span class="sensor-label">Runtime:</span>
+                    <span class="sensor-value" id="runtime">--</span>
+                </div>
+                <div class="sensor-item">
+                    <span class="sensor-label">Area Cleaned:</span>
+                    <span class="sensor-value" id="areaCleaned">--</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Log Panel -->
+        <section class="panel" id="logPanel">
+            <h2>Activity Log</h2>
+            <div class="log-container" id="logContainer">
+                <div class="log-entry">System ready. Connect to your Roomba to begin.</div>
+            </div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

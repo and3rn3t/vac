@@ -1,0 +1,5 @@
+# Python dependencies for Roomba communication
+paho-mqtt==1.6.1
+flask==3.0.0
+flask-cors==4.0.0
+python-dotenv==1.0.0
