@@ -26,6 +26,9 @@ Thumbs.db
 *.log
 logs/
 
+# Local data stores
+var/
+
 # Environment
 .env
 .env.local

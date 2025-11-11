@@ -4,7 +4,7 @@ This document describes the REST API and WebSocket interface for the Roomba Loca
 
 ## Base URL
 
-```
+```text
 http://[server-ip]:3000/api
 ```
 
@@ -21,6 +21,7 @@ GET /api/health
 ```
 
 **Response:**
+
 ```json
 {
   "status": "ok",
@@ -36,9 +37,11 @@ Scan the local network for Roomba devices (UDP broadcast on port 5678).
 
 ```http
 GET /api/discover
+GET /api/discover?timeoutMs=10000
 ```
 
 **Response:**
+
 ```json
 {
   "robots": [
@@ -54,9 +57,10 @@ GET /api/discover
 ```
 
 **Notes:**
-- Discovery may take up to 5 seconds
-- Requires UDP broadcast support on your network
-- Some routers/VLANs may block broadcast traffic
+
+- Default scan duration comes from `DISCOVERY_TIMEOUT_MS` in `.env` (defaults to 5000 ms)
+- Override per request with the optional `timeout` or `timeoutMs` query parameter (value in milliseconds)
+- Requires UDP broadcast support on your network and may be blocked on some routers/VLANs
 
 ---
 
@@ -76,6 +80,7 @@ Content-Type: application/json
 ```
 
 **Response (Success):**
+
 ```json
 {
   "success": true,
@@ -84,6 +89,7 @@ Content-Type: application/json
 ```
 
 **Response (Error):**
+
 ```json
 {
   "error": "Connection timeout"
@@ -91,6 +97,7 @@ Content-Type: application/json
 ```
 
 **Status Codes:**
+
 - `200 OK` - Successfully connected
 - `400 Bad Request` - Missing required fields
 - `500 Internal Server Error` - Connection failed
@@ -106,6 +113,7 @@ POST /api/disconnect
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -124,6 +132,7 @@ GET /api/state
 ```
 
 **Response:**
+
 ```json
 {
   "connected": true,
@@ -145,6 +154,7 @@ GET /api/state
 ```
 
 **Field Descriptions:**
+
 - `connected`: Whether MQTT connection is active
 - `battery`: Battery percentage (0-100)
 - `cleaning`: Whether robot is actively cleaning
@@ -159,6 +169,142 @@ GET /api/state
 
 ---
 
+### Get Mission Map
+
+Retrieve a downsampled point cloud for the most recent (or specified) cleaning mission. Useful for rendering a footprint of the robot's path.
+
+```http
+GET /api/map
+GET /api/map?missionId=clean:42&maxPoints=1500
+```
+
+**Query Parameters:**
+
+- `missionId` (optional): Target a specific mission identifier. Defaults to the active mission (if connected) or the latest mission in the analytics store.
+- `maxPoints` (optional): Upper bound for returned path points (defaults to 2000, capped at 5000).
+
+**Response:**
+
+```json
+{
+  "missionId": "run:42",
+  "startedAt": 1699900000000,
+  "endedAt": 1699903600000,
+  "sampleCount": 4325,
+  "pointCount": 1200,
+  "bounds": {
+    "minX": -260,
+    "maxX": 840,
+    "minY": -180,
+    "maxY": 610
+  },
+  "mission": {
+    "phase": "run",
+    "cycle": "clean",
+    "nMssn": 42
+  },
+  "points": [
+    { "timestamp": 1699900000000, "x": -12, "y": 0, "theta": 90 },
+    { "timestamp": 1699900005000, "x": -6, "y": 18, "theta": 92 }
+  ]
+}
+```
+
+**Notes:**
+
+- Raw telemetry samples are persisted in the local SQLite analytics database; make sure analytics is enabled.
+- The `points` array is downsampled to keep payloads lightweight while preserving the overall path shape.
+- When no map data is available yet, the endpoint responds with `404 Not Found`.
+
+---
+
+### Analytics Summary
+
+Retrieve aggregated telemetry metrics over a selectable window.
+
+```http
+GET /api/analytics/summary
+GET /api/analytics/summary?range=7d
+```
+
+**Query Parameters:**
+
+- `range` (optional): Time window to aggregate. Accepts milliseconds or suffix units `ms`, `s`, `m`, `h`, `d`, `w` (defaults to 30 days, capped at 365 days).
+
+**Response:**
+
+```json
+{
+  "rangeMs": 604800000,
+  "sampleCount": 864,
+  "rangeStart": 1699200000000,
+  "rangeEnd": 1699800000000,
+  "cleaningSampleCount": 128,
+  "estimatedCleaningMs": 5400000,
+  "estimatedTotalMs": 43200000,
+  "averageBatteryPct": 82.5,
+  "minBatteryPct": 18,
+  "maxBatteryPct": 100,
+  "binFullEvents": 2,
+  "missionsStarted": 6
+}
+```
+
+**Notes:**
+
+- `estimatedCleaningMs`/`estimatedTotalMs` are derived from sample deltas (large gaps are clamped to 5 minutes).
+- Metrics are calculated from data stored in the local SQLite database (`ANALYTICS_DB_PATH`).
+
+---
+
+### Analytics History
+
+Retrieve bucketed trend data for charts or time-series analysis.
+
+```http
+GET /api/analytics/history
+GET /api/analytics/history?range=30d&bucket=1d
+```
+
+**Query Parameters:**
+
+- `range` (optional): Time window to include (same format as summary, defaults to 30 days, capped at 365 days).
+- `bucket` (optional): Bucket size for grouping. Accepts the same units as `range` (falls back to auto-selected buckets).
+
+**Response:**
+
+```json
+{
+  "rangeMs": 2592000000,
+  "bucketSizeMs": 86400000,
+  "rangeStart": 1697328000000,
+  "rangeEnd": 1699843200000,
+  "buckets": [
+    {
+      "start": 1699401600000,
+      "end": 1699488000000,
+      "sampleCount": 36,
+      "cleaningSampleCount": 10,
+      "estimatedCleaningMs": 720000,
+      "estimatedTotalMs": 2160000,
+      "averageBatteryPct": 78.25,
+      "minBatteryPct": 26,
+      "maxBatteryPct": 100,
+      "binFullSampleCount": 2,
+      "binFullEvents": 1,
+      "missionsStarted": 1
+    }
+  ]
+}
+```
+
+**Notes:**
+
+- Buckets are returned in chronological order. Empty buckets are omitted.
+- `estimated*` values use the same capped-delta approximation as the summary endpoint.
+
+---
+
 ### Start Cleaning
 
 Start a cleaning mission.
@@ -168,6 +314,7 @@ POST /api/start
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -176,6 +323,7 @@ POST /api/start
 ```
 
 **Notes:**
+
 - Robot must be connected
 - Robot must not be charging or in error state
 
@@ -190,6 +338,7 @@ POST /api/stop
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -208,6 +357,7 @@ POST /api/pause
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -216,6 +366,7 @@ POST /api/pause
 ```
 
 **Notes:**
+
 - Robot will stop in place
 - Use `/api/resume` to continue cleaning
 
@@ -230,6 +381,7 @@ POST /api/resume
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -248,6 +400,7 @@ POST /api/dock
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -375,6 +528,7 @@ All endpoints may return error responses with the following format:
 ```
 
 Common error status codes:
+
 - `400 Bad Request` - Invalid input or precondition not met
 - `500 Internal Server Error` - Server or connection error
 
@@ -383,6 +537,7 @@ Common error status codes:
 ## Rate Limiting
 
 Currently, there is no rate limiting implemented. Be mindful of:
+
 - Sending commands too frequently (recommended: 1 command per second)
 - Discovery requests (recommended: no more than once per minute)
 
@@ -405,6 +560,7 @@ To add HTTPS/WSS support:
 ### Authentication
 
 Current version does not implement authentication. For multi-user environments, consider adding:
+
 - API keys
 - JWT tokens
 - OAuth2
@@ -483,6 +639,7 @@ curl http://localhost:3000/api/state
 ## Future API Enhancements
 
 Planned additions:
+
 - Room-specific cleaning commands
 - Schedule management endpoints
 - Map data retrieval
@@ -493,6 +650,7 @@ Planned additions:
 ## Support
 
 For API questions or issues, please refer to:
+
 - [README.md](README.md) for general usage
 - [PROTOCOL.md](PROTOCOL.md) for protocol details
 - GitHub issues for bug reports

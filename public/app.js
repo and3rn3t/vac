@@ -8,9 +8,16 @@ class RoombaApp {
         this.ws = null;
         this.connected = false;
         this.state = {};
+        this.currentMissionId = null;
+        this.wasCleaning = false;
+        this.lastMapFetch = 0;
+        this.mapFetchInFlight = false;
+        this.mapData = null;
+        this.handleResize = this.handleResize.bind(this);
         
         this.initializeElements();
         this.attachEventListeners();
+        this.setupCanvas();
         this.connectWebSocket();
     }
 
@@ -46,6 +53,11 @@ class RoombaApp {
 
         // Log container
         this.logContainer = document.getElementById('logContainer');
+
+        // Map elements
+        this.mapCanvas = document.getElementById('mapCanvas');
+        this.mapStatus = document.getElementById('mapStatus');
+        this.mapMeta = document.getElementById('mapMeta');
     }
 
     attachEventListeners() {
@@ -57,6 +69,73 @@ class RoombaApp {
         this.pauseBtn.addEventListener('click', () => this.sendCommand('pause'));
         this.stopBtn.addEventListener('click', () => this.sendCommand('stop'));
         this.dockBtn.addEventListener('click', () => this.sendCommand('dock'));
+    }
+
+    setupCanvas() {
+        if (!this.mapCanvas) {
+            return;
+        }
+
+        this.mapCtx = this.mapCanvas.getContext('2d');
+        this.setCanvasSize();
+        this.clearMapSurface();
+        window.addEventListener('resize', this.handleResize);
+    }
+
+    handleResize() {
+        this.setCanvasSize(true);
+    }
+
+    setCanvasSize(forceRedraw = false) {
+        if (!this.mapCanvas || !this.mapCtx) {
+            return;
+        }
+
+        const parent = this.mapCanvas.parentElement;
+        const parentWidth = parent ? parent.clientWidth : this.mapCanvas.clientWidth;
+        const size = Math.max(Math.min(parentWidth || 400, 600), 240);
+
+        if (this.mapCanvas.width !== size || this.mapCanvas.height !== size) {
+            this.mapCanvas.width = size;
+            this.mapCanvas.height = size;
+            this.mapCanvas.style.height = `${size}px`;
+        }
+
+        if (forceRedraw && this.mapData) {
+            this.drawMap(this.mapData, { skipResize: true });
+        } else if (!this.mapData) {
+            this.clearMapSurface();
+        }
+    }
+
+    clearMapSurface() {
+        if (!this.mapCtx || !this.mapCanvas) {
+            return;
+        }
+
+        this.mapCtx.clearRect(0, 0, this.mapCanvas.width, this.mapCanvas.height);
+        this.mapCtx.fillStyle = '#ffffff';
+        this.mapCtx.fillRect(0, 0, this.mapCanvas.width, this.mapCanvas.height);
+    }
+
+    setMapOverlay(message, options = {}) {
+        const preserve = options.preserve === true;
+        if (!preserve) {
+            this.clearMapSurface();
+        }
+        if (this.mapStatus) {
+            this.mapStatus.textContent = message;
+            this.mapStatus.classList.remove('hidden');
+        }
+        if (!preserve && this.mapMeta) {
+            this.mapMeta.textContent = '';
+        }
+    }
+
+    hideMapOverlay() {
+        if (this.mapStatus) {
+            this.mapStatus.classList.add('hidden');
+        }
     }
 
     connectWebSocket() {
@@ -169,6 +248,9 @@ class RoombaApp {
                 this.missionProgress.textContent = mission.phase;
             }
         }
+
+        this.handleMapUpdate(state);
+        this.wasCleaning = !!state.cleaning;
     }
 
     async discoverRoombas() {
@@ -282,6 +364,245 @@ class RoombaApp {
             this.log(`Command failed: ${error.message}`, 'error');
             alert(`Failed to execute command: ${error.message}`);
         }
+    }
+
+    handleMapUpdate(state) {
+        if (!this.mapCanvas || !this.mapCtx) {
+            return;
+        }
+
+        const missionId = this.extractMissionId(state ? state.mission : null);
+        const missionChanged = missionId !== this.currentMissionId;
+
+        if (missionChanged) {
+            this.currentMissionId = missionId;
+            this.fetchMap(true);
+            return;
+        }
+
+        const cleaningNow = !!(state && state.cleaning);
+        const cleaningStarted = cleaningNow && !this.wasCleaning;
+        const cleaningStopped = !cleaningNow && this.wasCleaning;
+
+        if (cleaningStarted) {
+            this.fetchMap(true);
+            return;
+        }
+
+        if (cleaningNow) {
+            this.fetchMap();
+        } else if (cleaningStopped) {
+            this.fetchMap(true);
+        }
+    }
+
+    extractMissionId(mission) {
+        if (!mission || typeof mission !== 'object') {
+            return null;
+        }
+
+        return (
+            mission.missionId ||
+            mission.mssid ||
+            mission.mssnId ||
+            mission.sMissionId ||
+            mission.runId ||
+            mission.cMissionId ||
+            (mission.cycle && mission.nMssn !== undefined ? `${mission.cycle}:${mission.nMssn}` : mission.cycle) ||
+            null
+        );
+    }
+
+    async fetchMap(force = false) {
+        if (!this.mapCanvas || this.mapFetchInFlight) {
+            return;
+        }
+
+        const now = Date.now();
+        if (!force && now - this.lastMapFetch < 5000) {
+            return;
+        }
+
+        this.mapFetchInFlight = true;
+        this.setMapOverlay(force ? 'Loading map…' : 'Updating map…', { preserve: !!this.mapData });
+
+        try {
+            const params = new URLSearchParams();
+            if (this.currentMissionId) {
+                params.set('missionId', this.currentMissionId);
+            }
+            const query = params.toString();
+            const response = await fetch(`/api/map${query ? `?${query}` : ''}`);
+
+            if (response.status === 404) {
+                this.mapData = null;
+                this.lastMapFetch = now;
+                this.setMapOverlay('No mission map data yet.', { preserve: false });
+                if (this.mapMeta) {
+                    this.mapMeta.textContent = 'No mission data yet.';
+                }
+                return;
+            }
+
+            const payload = await response.json();
+
+            if (!response.ok) {
+                throw new Error(payload && payload.error ? payload.error : `Request failed with status ${response.status}`);
+            }
+
+            this.drawMap(payload);
+            this.lastMapFetch = Date.now();
+        } catch (error) {
+            console.error('Failed to fetch map data:', error);
+            this.setMapOverlay('Map unavailable. Check server logs.', { preserve: false });
+        } finally {
+            this.mapFetchInFlight = false;
+        }
+    }
+
+    drawMap(data, options = {}) {
+        if (!this.mapCanvas || !this.mapCtx) {
+            return;
+        }
+
+        if (!options.skipResize) {
+            this.setCanvasSize();
+        }
+
+        this.mapData = data;
+
+        if (!data || !Array.isArray(data.points) || data.points.length === 0) {
+            this.setMapOverlay('Path data not available yet.', { preserve: false });
+            if (this.mapMeta) {
+                const label = this.formatMissionLabel(data);
+                this.mapMeta.textContent = `${label} · 0 points`;
+            }
+            return;
+        }
+
+        const bounds = data.bounds;
+        if (!bounds) {
+            this.setMapOverlay('Bounds unavailable.', { preserve: false });
+            return;
+        }
+
+        this.hideMapOverlay();
+        this.clearMapSurface();
+
+        const ctx = this.mapCtx;
+        const width = this.mapCanvas.width;
+        const height = this.mapCanvas.height;
+        const padding = 24;
+
+        const spanX = bounds.maxX - bounds.minX || 1;
+        const spanY = bounds.maxY - bounds.minY || 1;
+        const scale = Math.min(
+            (width - padding * 2) / spanX,
+            (height - padding * 2) / spanY
+        );
+
+        ctx.save();
+        ctx.strokeStyle = '#667eea';
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+
+        data.points.forEach((point, index) => {
+            const projected = this.mapPointToCanvas(point, bounds, scale, padding, height);
+            if (index === 0) {
+                ctx.moveTo(projected.x, projected.y);
+            } else {
+                ctx.lineTo(projected.x, projected.y);
+            }
+        });
+
+        ctx.stroke();
+        ctx.restore();
+
+        const firstPoint = this.mapPointToCanvas(data.points[0], bounds, scale, padding, height);
+        const lastPoint = this.mapPointToCanvas(data.points[data.points.length - 1], bounds, scale, padding, height);
+
+        this.drawPointMarker(firstPoint, '#28a745');
+        this.drawPointMarker(lastPoint, '#dc3545');
+
+        const finalSample = data.points[data.points.length - 1];
+        if (finalSample && Number.isFinite(finalSample.theta)) {
+            this.drawHeadingArrow(lastPoint, finalSample.theta);
+        }
+
+        if (this.mapMeta) {
+            const label = this.formatMissionLabel(data);
+            const updatedAt = new Date().toLocaleTimeString();
+            this.mapMeta.textContent = `${label} · ${data.pointCount} points · Updated ${updatedAt}`;
+        }
+    }
+
+    mapPointToCanvas(point, bounds, scale, padding, canvasHeight) {
+        return {
+            x: padding + (point.x - bounds.minX) * scale,
+            y: canvasHeight - (padding + (point.y - bounds.minY) * scale)
+        };
+    }
+
+    drawPointMarker(position, color) {
+        if (!this.mapCtx) {
+            return;
+        }
+
+        const ctx = this.mapCtx;
+        ctx.save();
+        ctx.fillStyle = color;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(position.x, position.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    drawHeadingArrow(position, thetaDegrees) {
+        if (!this.mapCtx) {
+            return;
+        }
+
+        const ctx = this.mapCtx;
+        const radians = (thetaDegrees * Math.PI) / 180;
+        const length = 24;
+        const dx = Math.cos(radians) * length;
+        const dy = Math.sin(radians) * length;
+
+        ctx.save();
+        ctx.strokeStyle = '#17a2b8';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(position.x, position.y);
+        ctx.lineTo(position.x + dx, position.y - dy);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    formatMissionLabel(data) {
+        if (!data) {
+            return 'Mission';
+        }
+
+        const mission = data.mission || {};
+
+        if (mission.nMssn !== undefined) {
+            return `Mission #${mission.nMssn}`;
+        }
+
+        if (mission.cycle) {
+            return `Mission ${mission.cycle}`;
+        }
+
+        if (data.missionId) {
+            return `Mission ${data.missionId}`;
+        }
+
+        return 'Mission';
     }
 
     enableControls() {

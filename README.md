@@ -5,12 +5,14 @@ Control your Roomba j9+ robot vacuum locally without iRobot cloud services. This
 ## Features
 
 ### 🎮 Full Local Control
+
 - Start/Stop/Pause cleaning operations
 - Return to dock command
 - Real-time status monitoring
 - No cloud dependency
 
 ### 📊 Sensor Access
+
 - Battery level monitoring
 - Cleaning status and progress
 - Position tracking
@@ -18,15 +20,23 @@ Control your Roomba j9+ robot vacuum locally without iRobot cloud services. This
 - Mission data (runtime, area cleaned)
 
 ### 🌐 Web Portal
+
 - Modern, responsive web interface
 - Real-time updates via WebSocket
 - Works on desktop and mobile browsers
 - Network discovery for easy setup
 
 ### 📱 Mobile App Shell
+
 - Foundation for native mobile app development
 - React-based architecture
 - API integration ready
+
+### 📈 Analytics
+
+- Persistent telemetry logging to a local SQLite store
+- `/api/analytics/*` endpoints for summaries and historical buckets
+- Configurable retention window for long-running deployments
 
 ## Prerequisites
 
@@ -53,10 +63,12 @@ npm install
 To connect to your Roomba, you need two pieces of information:
 
 **BLID (Robot ID):**
+
 - Found on the robot itself (under the lid or on a label)
 - Can be discovered using the network discovery feature
 
 **Password:**
+
 1. Ensure your Roomba is on the dock and powered on
 2. Press and hold the HOME button for about 2 seconds
 3. The robot will play a tone and the light ring will flash
@@ -78,7 +90,19 @@ ROOMBA_IP=192.168.1.100
 ROOMBA_BLID=your_robot_blid_here
 ROOMBA_PASSWORD=your_robot_password_here
 PORT=3000
+LOG_LEVEL=info
+MQTT_PORT=8883
+MQTT_USE_TLS=true
+MQTT_KEEPALIVE_SEC=60
+MQTT_RECONNECT_MS=5000
+DISCOVERY_TIMEOUT_MS=5000
+ANALYTICS_DB_PATH=./var/analytics.db
+ANALYTICS_RETENTION_DAYS=90
 ```
+
+`LOG_LEVEL` controls server verbosity (`error`, `warn`, `info`, `debug`). `MQTT_KEEPALIVE_SEC` and `MQTT_RECONNECT_MS` tune the connection to your robot, and `DISCOVERY_TIMEOUT_MS` adjusts how long `/api/discover` scans the network.
+
+`ANALYTICS_DB_PATH` chooses where the SQLite database lives (defaults to `./var/analytics.db`) and `ANALYTICS_RETENTION_DAYS` controls how long historical samples are kept. Set retention to `0` or leave blank to keep all data.
 
 ### 4. Start the Server
 
@@ -91,12 +115,14 @@ The server will start on `http://localhost:3000`
 ### 5. Access the Web Interface
 
 Open your browser and navigate to:
-```
+
+```text
 http://localhost:3000
 ```
 
 Or from another device on your network:
-```
+
+```text
 http://[server-ip]:3000
 ```
 
@@ -114,12 +140,14 @@ http://[server-ip]:3000
 The server provides a REST API for programmatic control:
 
 #### Connection
+
 - `GET /api/health` - Server health check
 - `GET /api/discover` - Discover Roombas on network
 - `POST /api/connect` - Connect to a Roomba
 - `POST /api/disconnect` - Disconnect from Roomba
 
 #### Control
+
 - `POST /api/start` - Start cleaning
 - `POST /api/stop` - Stop cleaning
 - `POST /api/pause` - Pause cleaning
@@ -127,12 +155,20 @@ The server provides a REST API for programmatic control:
 - `POST /api/dock` - Return to dock
 
 #### Status
+
 - `GET /api/state` - Get current robot state
 
+#### Analytics
+
+- `GET /api/analytics/summary` - Aggregate metrics over an optional range (e.g. `?range=7d`)
+- `GET /api/analytics/history` - Time-bucketed trends with optional `range` and `bucket` (e.g. `?range=30d&bucket=1d`)
+
 #### WebSocket
+
 Connect to `ws://[server-ip]:3000` for real-time updates.
 
 Messages received:
+
 ```json
 {
   "type": "stateUpdate",
@@ -149,17 +185,20 @@ Messages received:
 ## Architecture
 
 ### Backend (Node.js)
+
 - **Express**: REST API server
 - **MQTT**: Communication with Roomba using iRobot protocol
 - **WebSocket**: Real-time updates to clients
 - **UDP Discovery**: Network-based robot discovery
 
 ### Frontend (Vanilla JS)
+
 - Modern, responsive web interface
 - Real-time status updates
 - Mobile-friendly design
 
 ### Communication Protocol
+
 - Uses MQTT over TLS (port 8883) or non-TLS (port 1883)
 - AWS IoT-style topics for command and status
 - JSON message format
@@ -191,7 +230,7 @@ See [PROTOCOL.md](PROTOCOL.md) for detailed protocol information.
 
 ### Project Structure
 
-```
+```text
 vac/
 ├── server/              # Backend server
 │   ├── index.js        # Main server file
@@ -239,6 +278,7 @@ The `mobile-app/` directory contains a shell for future mobile app development. 
 ## Contributing
 
 Contributions are welcome! Areas for improvement:
+
 - Enhanced mapping visualization
 - Room-specific cleaning
 - Schedule management
@@ -263,6 +303,7 @@ This is an independent project and is not affiliated with or endorsed by iRobot 
 ## Support
 
 For issues and questions:
+
 - Open an issue on GitHub
 - Check existing issues for solutions
 - Review the PROTOCOL.md for technical details

@@ -6,6 +6,25 @@
 const mqtt = require('mqtt');
 const EventEmitter = require('events');
 
+const LOG_LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
+const configuredLogLevel = (process.env.LOG_LEVEL || 'info').toLowerCase();
+const activeLogLevel = LOG_LEVELS[configuredLogLevel] ?? LOG_LEVELS.info;
+
+function log(level, ...args) {
+  const normalizedLevel = level.toLowerCase();
+  const threshold = LOG_LEVELS[normalizedLevel];
+  if (threshold === undefined || threshold > activeLogLevel) {
+    return;
+  }
+
+  if (normalizedLevel === 'debug') {
+    console.log(...args);
+    return;
+  }
+
+  console[normalizedLevel](...args);
+}
+
 class RoombaClient extends EventEmitter {
   constructor(config) {
     super();
@@ -14,7 +33,9 @@ class RoombaClient extends EventEmitter {
       blid: config.blid,
       password: config.password,
       port: config.port || 8883,
-      useTLS: config.useTLS !== false
+      useTLS: config.useTLS !== false,
+      keepalive: Number.isFinite(config.keepalive) ? config.keepalive : 60,
+      reconnectPeriod: Number.isFinite(config.reconnectPeriod) ? config.reconnectPeriod : 5000
     };
     this.client = null;
     this.connected = false;
@@ -41,15 +62,15 @@ class RoombaClient extends EventEmitter {
         username: this.config.blid,
         password: this.config.password,
         rejectUnauthorized: false, // Self-signed certs
-        keepalive: 60,
-        reconnectPeriod: 5000
+        keepalive: this.config.keepalive,
+        reconnectPeriod: this.config.reconnectPeriod
       };
 
-      console.log(`Connecting to Roomba at ${url}...`);
+      log('info', `Connecting to Roomba at ${url} (keepalive ${options.keepalive}s, reconnect ${options.reconnectPeriod}ms)...`);
       this.client = mqtt.connect(url, options);
 
       this.client.on('connect', () => {
-        console.log('Connected to Roomba!');
+        log('info', 'Connected to Roomba!');
         this.connected = true;
         
         // Subscribe to status topics
@@ -65,7 +86,7 @@ class RoombaClient extends EventEmitter {
       });
 
       this.client.on('error', (error) => {
-        console.error('MQTT Error:', error.message);
+        log('error', 'MQTT Error:', error.message);
         this.emit('error', error);
         reject(error);
       });
@@ -147,7 +168,7 @@ class RoombaClient extends EventEmitter {
         if (error) {
           reject(error);
         } else {
-          console.log(`Command sent: ${command}`);
+          log('debug', `Command sent: ${command}`);
           resolve();
         }
       });

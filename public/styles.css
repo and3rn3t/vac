@@ -309,6 +309,56 @@ header h1 {
     color: #667eea;
 }
 
+.map-container {
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #dee2e6;
+    padding: 16px;
+}
+
+.map-canvas-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    margin: 0 auto;
+}
+
+#mapCanvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: #ffffff;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+}
+
+.map-status {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    color: #6c757d;
+    background: rgba(255, 255, 255, 0.85);
+    border-radius: 6px;
+    text-align: center;
+    padding: 20px;
+    transition: opacity 0.2s ease;
+}
+
+.map-status.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.map-meta {
+    margin-top: 12px;
+    font-size: 0.9em;
+    color: #555;
+    text-align: center;
+}
+
 @media (max-width: 768px) {
     header h1 {
         font-size: 1.8em;

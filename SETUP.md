@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD022 MD031 MD032 MD036 MD040 -->
+
 # Setup Guide
 
 This guide will walk you through setting up the Roomba Local Control System from scratch.
@@ -86,11 +88,25 @@ ROOMBA_PASSWORD=:1:2345678901:AbCdEfGhIjKlMnOp
 
 # Server port (optional)
 PORT=3000
+LOG_LEVEL=info
 
 # MQTT settings (optional)
 MQTT_PORT=8883
 MQTT_USE_TLS=true
+MQTT_KEEPALIVE_SEC=60
+MQTT_RECONNECT_MS=5000
+
+# Discovery settings (optional)
+DISCOVERY_TIMEOUT_MS=5000
+
+# Analytics settings (optional)
+ANALYTICS_DB_PATH=./var/analytics.db
+ANALYTICS_RETENTION_DAYS=90
 ```
+
+`LOG_LEVEL` accepts `error`, `warn`, `info`, or `debug` to control console verbosity. `MQTT_KEEPALIVE_SEC` and `MQTT_RECONNECT_MS` let you tune the robot connection, and `DISCOVERY_TIMEOUT_MS` changes how long the discovery scan waits for responses.
+
+`ANALYTICS_DB_PATH` selects where the local SQLite database is created (defaults to `./var/analytics.db`) and `ANALYTICS_RETENTION_DAYS` controls how long telemetry samples are retained. Set retention to `0` to keep everything.
 
 ## Step 5: Start the Server
 
