@@ -131,12 +131,68 @@
                 <div class="room-list" id="roomList">
                     <div class="room-empty">No rooms discovered yet.</div>
                 </div>
+                <div class="room-status hidden" id="roomStatus"></div>
                 <div class="room-staleness hidden" id="roomStaleness">Room metadata is out of date. Refreshing...</div>
                 <label class="room-order-option">
                     <input type="checkbox" id="roomOrderToggle" checked>
                     <span>Clean in selected order</span>
                 </label>
                 <button id="cleanRoomsBtn" class="btn btn-success" type="button" disabled>Clean Selected Areas</button>
+            </div>
+        </section>
+
+        <!-- Schedule Panel -->
+        <section class="panel" id="schedulePanel">
+            <h2>Schedules</h2>
+            <div class="schedule-controls">
+                <div class="form-row">
+                    <label for="scheduleAction">Action</label>
+                    <select id="scheduleAction">
+                        <option value="start">Start</option>
+                        <option value="pause">Pause</option>
+                        <option value="stop">Stop</option>
+                        <option value="resume">Resume</option>
+                        <option value="dock">Dock</option>
+                        <option value="cleanRooms">Clean Selected Areas</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label for="scheduleWhenInput">When</label>
+                    <input type="text" id="scheduleWhenInput" placeholder="in 10m or 2025-11-11T17:00" />
+                </div>
+                <div class="form-row">
+                    <label for="scheduleIntervalInput">Repeat (interval, optional)</label>
+                    <input type="text" id="scheduleIntervalInput" placeholder="e.g. 1h or 86400000" />
+                </div>
+                <div class="hint" id="scheduleHint">For Clean Selected Areas, use the selection in the Rooms list above.</div>
+                <div class="button-group">
+                    <button id="createScheduleBtn" class="btn btn-primary" type="button">Create Schedule</button>
+                    <button id="refreshSchedulesBtn" class="btn btn-secondary btn-compact" type="button">Refresh</button>
+                </div>
+                <div class="filter-row">
+                    <label class="visually-hidden" for="scheduleFilterStatus">Filter by status</label>
+                    <select id="scheduleFilterStatus" title="Filter schedules by status">
+                        <option value="">All Statuses</option>
+                        <option value="pending">Pending</option>
+                        <option value="executed">Executed</option>
+                        <option value="failed">Failed</option>
+                        <option value="canceled">Canceled</option>
+                    </select>
+                    <label class="visually-hidden" for="scheduleFilterAction">Filter by action</label>
+                    <select id="scheduleFilterAction" title="Filter schedules by action">
+                        <option value="">All Actions</option>
+                        <option value="start">Start</option>
+                        <option value="pause">Pause</option>
+                        <option value="stop">Stop</option>
+                        <option value="resume">Resume</option>
+                        <option value="dock">Dock</option>
+                        <option value="cleanRooms">Clean Rooms</option>
+                    </select>
+                    <button id="scheduleSortBtn" class="btn btn-secondary btn-compact" type="button">Sort: Soonest</button>
+                </div>
+            </div>
+            <div class="schedule-list" id="scheduleList">
+                <div class="schedule-empty">No schedules yet.</div>
             </div>
         </section>
 

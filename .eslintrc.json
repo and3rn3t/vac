@@ -1,0 +1,22 @@
+{
+  "env": {
+    "commonjs": true,
+    "es2022": true,
+    "node": true
+  },
+  "extends": ["eslint:recommended"],
+  "parserOptions": {
+    "ecmaVersion": 2022
+  },
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-constant-condition": ["error", { "checkLoops": false }],
+    "semi": ["warn", "always"],
+    "quotes": ["warn", "single", { "avoidEscape": true }]
+  },
+  "ignorePatterns": [
+    "var/**",
+    "mobile-app/**",
+    "node_modules/**"
+  ]
+}

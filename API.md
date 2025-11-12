@@ -6,19 +6,81 @@ This document describes the REST API and WebSocket interface for the Roomba Loca
 
 ```text
 http://[server-ip]:3000/api
-```
+```json
 
 Default: `http://localhost:3000/api`
 
 ## REST API Endpoints
 
+### Server Configuration
+
+Retrieve non-sensitive runtime configuration values.
+
+```http
+GET /api/config
+```json
+
+**Response:**
+
+```json
+{
+  "analyticsEnabled": true,
+  "retentionDays": 90,
+  "logLevel": "info",
+  "mqtt": {
+    "port": 8883,
+    "useTLS": true,
+    "keepaliveSec": 60,
+    "reconnectMs": 5000
+  },
+  "discovery": { "defaultTimeoutMs": 5000 },
+  "analytics": { "defaultRangeMs": 2592000000, "maxRangeMs": 31536000000 },
+  "version": "1.0.0"
+}
+```json
+
+Notes:
+
+- Does not expose secrets (passwords, BLID).
+- Suitable for UI feature toggling and diagnostics.
+
+---
+
+### Command Audit Trail
+
+Inspect recently issued commands and their outcomes (in-memory ring buffer).
+
+```http
+GET /api/commands
+GET /api/commands?limit=25
+```json
+
+**Response:**
+
+```json
+{
+  "items": [
+    { "timestamp": 1699900000000, "requestId": "a1b2c3d4", "command": "start", "status": "ok" },
+    { "timestamp": 1699900010000, "requestId": "a1b2c3d5", "command": "dock", "status": "error", "message": "Not connected to Roomba" }
+  ],
+  "total": 2
+}
+```json
+
+Notes:
+
+- This buffer is ephemeral and resets on server restart.
+- Use `requestId` to correlate with REST responses and WebSocket events.
+
+---
+ 
 ### Health Check
 
 Check if the server is running.
 
 ```http
 GET /api/health
-```
+```json
 
 **Response:**
 
@@ -27,7 +89,7 @@ GET /api/health
   "status": "ok",
   "timestamp": 1699876543210
 }
-```
+```json
 
 ---
 
@@ -38,7 +100,7 @@ Scan the local network for Roomba devices (UDP broadcast on port 5678).
 ```http
 GET /api/discover
 GET /api/discover?timeoutMs=10000
-```
+```json
 
 **Response:**
 
@@ -324,7 +386,8 @@ POST /api/start
 ```json
 {
   "success": true,
-  "message": "Cleaning started"
+  "message": "Cleaning started",
+  "requestId": "a1b2c3d4"
 }
 ```
 
@@ -348,7 +411,8 @@ POST /api/stop
 ```json
 {
   "success": true,
-  "message": "Cleaning stopped"
+  "message": "Cleaning stopped",
+  "requestId": "a1b2c3d4"
 }
 ```
 
@@ -367,7 +431,8 @@ POST /api/pause
 ```json
 {
   "success": true,
-  "message": "Cleaning paused"
+  "message": "Cleaning paused",
+  "requestId": "a1b2c3d4"
 }
 ```
 
@@ -391,7 +456,8 @@ POST /api/resume
 ```json
 {
   "success": true,
-  "message": "Cleaning resumed"
+  "message": "Cleaning resumed",
+  "requestId": "a1b2c3d4"
 }
 ```
 
@@ -410,7 +476,8 @@ POST /api/dock
 ```json
 {
   "success": true,
-  "message": "Returning to dock"
+  "message": "Returning to dock",
+  "requestId": "a1b2c3d4"
 }
 ```
 
@@ -449,7 +516,8 @@ Content-Type: application/json
   "regions": [
     { "region_id": "kitchen" },
     "hallway"
-  ]
+  ],
+  "requestId": "a1b2c3d4"
 }
 ```
 
@@ -513,12 +581,24 @@ Sent when connection to Roomba changes.
 
 #### Error
 
-Sent when an error occurs.
+Sent when an error occurs. For command failures, includes `command` and `requestId` for correlation.
 
 ```json
 {
   "type": "error",
   "message": "Connection lost"
+}
+```
+
+#### Command
+
+Emitted when a control command is acknowledged server-side. Includes a `requestId` that matches the REST response header `x-request-id` and response body.
+
+```json
+{
+  "type": "command",
+  "command": "start",
+  "requestId": "a1b2c3d4"
 }
 ```
 
@@ -570,18 +650,60 @@ const roomba = new RoombaWebSocket('ws://localhost:3000');
 
 ## Error Responses
 
-All endpoints may return error responses with the following format:
+All error responses follow this standardized shape:
 
 ```json
 {
-  "error": "Error message description"
+  "error": "Human readable description",
+  "code": "machine_readable_code"
 }
 ```
 
-Common error status codes:
+Examples:
 
-- `400 Bad Request` - Invalid input or precondition not met
-- `500 Internal Server Error` - Server or connection error
+```json
+{ "error": "Not connected to Roomba", "code": "not_connected" }
+```
+
+```json
+{ "error": "Invalid range value", "code": "bad_request" }
+```
+
+Common HTTP status codes:
+
+- `400 Bad Request` – Invalid input or precondition not met
+- `404 Not Found` – Resource not available (e.g., mission map missing)
+- `500 Internal Server Error` – Unexpected server or connectivity issue
+- `503 Service Unavailable` – Dependent subsystem disabled (e.g., analytics store not initialized)
+
+Error codes are stable identifiers intended for client logic.
+
+---
+
+## Request Correlation
+
+The server supports end-to-end request correlation to make tracing easy:
+
+- Clients may send an `x-request-id` header; if absent, the server generates one.
+- The server echoes `x-request-id` in responses and includes `requestId` in JSON bodies for command endpoints and errors.
+- WebSocket emits `command` and `error` messages with the matching `requestId` for correlation across channels.
+
+Example:
+
+```http
+POST /api/start
+x-request-id: a1b2c3d4
+```
+
+```json
+{ "success": true, "message": "Cleaning started", "requestId": "a1b2c3d4" }
+```
+
+WebSocket:
+
+```json
+{ "type": "command", "command": "start", "requestId": "a1b2c3d4" }
+```
 
 ---
 
@@ -697,6 +819,103 @@ Planned additions:
 - Historical mission data
 - Multi-robot support
 - Webhook notifications
+
+---
+
+## Scheduling
+
+The server supports one-shot scheduling of core actions and targeted cleaning.
+
+### Endpoints
+
+- `GET /api/schedules` – list all schedules (sorted by time)
+- `POST /api/schedules` – create a new one-shot schedule
+- `POST /api/schedules` – create a new schedule (one-shot or recurring)
+- `PATCH /api/schedules/:id` – update a pending schedule (time/action/payload/interval)
+- `DELETE /api/schedules/:id` – cancel a pending schedule
+
+### POST /api/schedules
+
+Body fields:
+
+```
+{
+  "action": "start",            // required: start|stop|pause|resume|dock|cleanRooms
+  "when": 1731340800000,         // required: epoch ms OR ISO8601 string ("when" or "scheduledAt")
+  "payload": {                   // optional; required for cleanRooms
+    "regions": ["kitchen", "hall"],
+    "ordered": true,
+    "mapId": "pmap123",
+    "userPmapvId": "1"
+  },
+  "intervalMs": 86400000        // optional: make schedule recurring every N ms
+}
+```
+
+Response (201):
+
+```
+{
+  "schedule": {
+    "id": "abc123...",
+    "action": "start",
+    "scheduledAt": 1731340800000,
+    "status": "pending",
+    "createdAt": 1731337200000,
+    "updatedAt": 1731337200000,
+    "requestId": "req789"
+  }
+}
+```
+
+### GET /api/schedules
+
+```
+{
+  "items": [ { "id": "...", "action": "start", "scheduledAt": 1731340800000, "status": "pending", ... } ]
+}
+```
+
+### DELETE /api/schedules/:id
+
+Returns the schedule after cancellation (status becomes `canceled` if still pending).
+
+### Schedule Object Fields
+
+- `id` – unique identifier
+- `action` – scheduled action
+- `payload` – optional payload (required for `cleanRooms`)
+- `scheduledAt` – time in ms epoch
+- `status` – `pending|canceled|executed|failed` (recurring schedules remain `pending` and reschedule after each run)
+- `createdAt` / `updatedAt` – timestamps
+- `executedAt` – timestamp when executed (for executed/failed)
+- `requestId` – requestId of creation
+- `executionRequestId` – requestId used when executing the action
+- `intervalMs` – recurrence interval in ms (if set)
+- `lastRunAt` – timestamp of the most recent execution (for recurring)
+- `result` – `{ ok: true }` or `{ ok: false, message }` after latest execution
+
+### WebSocket Scheduling Events
+
+Scheduling lifecycle events broadcast with `type: "schedule"`:
+
+```
+{ "type": "schedule", "event": "created",   "schedule": { ... } }
+{ "type": "schedule", "event": "executing", "schedule": { ... } }
+{ "type": "schedule", "event": "executed",  "schedule": { ... } }
+{ "type": "schedule", "event": "failed",    "schedule": { ... } }
+{ "type": "schedule", "event": "canceled",  "schedule": { ... } }
+{ "type": "schedule", "event": "updated",   "schedule": { ... } }
+```
+
+`executionRequestId` can be matched against command WebSocket events and the command audit trail (as `schedule:action`).
+
+### Notes
+
+- Recurring schedules are supported via `intervalMs`; they stay `pending` and reschedule after each run (even on failure).
+- Maximum delay relies on Node's `setTimeout` capacity (~24.8 days); longer term schedules should be recreated after restart.
+- Persistence lives at `var/schedules.json`; removing this file wipes pending schedules.
+- If the robot is disconnected at execution time, the schedule fails (`status: failed`).
 
 ## Support
 

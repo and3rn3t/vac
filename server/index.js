@@ -14,6 +14,7 @@ const RoombaClient = require('./roomba-client');
 const RoombaDiscovery = require('./discovery');
 const AnalyticsStore = require('./data/analytics-store');
 const deriveMissionIdentifier = AnalyticsStore.deriveMissionIdentifier;
+const Scheduler = require('./scheduler');
 
 const app = express();
 const server = http.createServer(app);
@@ -40,6 +41,25 @@ function log(level, ...args) {
 
 // Middleware
 app.use(cors());
+// Always assign a request id and echo it; clients may provide x-request-id
+app.use((req, res, next) => {
+  const reqId = req.headers['x-request-id'] || Math.random().toString(16).slice(2);
+  req.requestId = reqId;
+  res.setHeader('x-request-id', reqId);
+  next();
+});
+// Lightweight request logging (respects LOG_LEVEL)
+app.use((req, res, next) => {
+  if (activeLogLevel < LOG_LEVELS.info) return next();
+  const start = Date.now();
+  const bodyLength = req.headers['content-length'] ? parseInt(req.headers['content-length'], 10) : undefined;
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const error = res.statusCode >= 400;
+    log('info', `${req.requestId} ${req.method} ${req.originalUrl} -> ${res.statusCode} ${duration}ms` + (bodyLength ? ` body=${bodyLength}` : '') + (error ? ' error=true' : ''));
+  });
+  next();
+});
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
@@ -50,6 +70,16 @@ const DEFAULT_DISCOVERY_TIMEOUT = parseInt(process.env.DISCOVERY_TIMEOUT_MS || '
 const DEFAULT_ANALYTICS_RANGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_ANALYTICS_RANGE_MS = 365 * 24 * 60 * 60 * 1000;
 
+// Command audit trail (in-memory ring buffer)
+const COMMAND_AUDIT_MAX = 200;
+const commandAudit = [];
+function addAudit(entry) {
+  commandAudit.push({ ...entry, timestamp: entry.timestamp || Date.now() });
+  if (commandAudit.length > COMMAND_AUDIT_MAX) {
+    commandAudit.splice(0, commandAudit.length - COMMAND_AUDIT_MAX);
+  }
+}
+
 let analyticsStore = null;
 try {
   analyticsStore = new AnalyticsStore({ dbPath: process.env.ANALYTICS_DB_PATH });
@@ -57,6 +87,63 @@ try {
 } catch (error) {
   analyticsStore = null;
   log('error', 'Failed to initialize analytics store:', error.message);
+}
+
+// Scheduler setup
+let scheduler = null;
+function initScheduler() {
+  const storagePath = path.join(__dirname, '..', 'var', 'schedules.json');
+  scheduler = new Scheduler({
+    storagePath,
+    broadcast,
+    addAudit,
+    log,
+    execute: async (schedule, execReqId) => {
+      // Map actions to existing endpoints/roomba commands
+      if (!roombaClient || !roombaClient.connected) {
+        throw new Error('Not connected to Roomba');
+      }
+      switch (schedule.action) {
+        case 'start':
+          await roombaClient.start();
+          broadcast({ type: 'command', command: 'start', requestId: execReqId });
+          break;
+        case 'stop':
+          await roombaClient.stop();
+          broadcast({ type: 'command', command: 'stop', requestId: execReqId });
+          break;
+        case 'pause':
+          await roombaClient.pause();
+          broadcast({ type: 'command', command: 'pause', requestId: execReqId });
+          break;
+        case 'resume':
+          await roombaClient.resume();
+          broadcast({ type: 'command', command: 'resume', requestId: execReqId });
+          break;
+        case 'dock':
+          await roombaClient.dock();
+          broadcast({ type: 'command', command: 'dock', requestId: execReqId });
+          break;
+        case 'cleanRooms': {
+          const payload = schedule.payload || {};
+          // Basic validation: require regions array
+          if (!Array.isArray(payload.regions) || payload.regions.length === 0) {
+            throw new Error('cleanRooms requires regions array');
+          }
+          await roombaClient.cleanRooms({
+            regions: payload.regions,
+            ordered: payload.ordered !== undefined ? !!payload.ordered : true,
+            mapId: payload.mapId || payload.pmapId,
+            userPmapvId: payload.userPmapvId
+          });
+          broadcast({ type: 'command', command: 'cleanRooms', requestId: execReqId, payload: { regions: payload.regions, ordered: payload.ordered !== undefined ? !!payload.ordered : true } });
+          break;
+        }
+        default:
+          throw new Error(`Unknown action: ${schedule.action}`);
+      }
+    }
+  });
 }
 
 function handleStateUpdate(state) {
@@ -204,6 +291,31 @@ wss.on('connection', (ws) => {
 });
 
 // API Routes
+// Server/runtime configuration (no secrets)
+app.get('/api/config', (req, res) => {
+  const analyticsEnabled = !!analyticsStore;
+  const retentionDays = parseInt(process.env.ANALYTICS_RETENTION_DAYS || '90', 10);
+  const config = {
+    analyticsEnabled,
+    retentionDays: Number.isFinite(retentionDays) ? retentionDays : null,
+    logLevel: configuredLogLevel,
+    mqtt: {
+      port: parseInt(process.env.MQTT_PORT || '8883', 10),
+      useTLS: process.env.MQTT_USE_TLS !== 'false',
+      keepaliveSec: parseInt(process.env.MQTT_KEEPALIVE_SEC || '60', 10),
+      reconnectMs: parseInt(process.env.MQTT_RECONNECT_MS || '5000', 10)
+    },
+    discovery: {
+      defaultTimeoutMs: DEFAULT_DISCOVERY_TIMEOUT
+    },
+    analytics: {
+      defaultRangeMs: DEFAULT_ANALYTICS_RANGE_MS,
+      maxRangeMs: MAX_ANALYTICS_RANGE_MS
+    },
+    version: require('../package.json').version
+  };
+  res.json(config);
+});
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -226,13 +338,22 @@ app.get('/api/discover', async (req, res) => {
 });
 
 // Connect to Roomba
+const {
+  validateConnectBody,
+  validateCleanRoomsBody,
+  validateMapQuery,
+  validateAnalyticsQuery,
+  sendError
+} = require('./validation');
+
 app.post('/api/connect', async (req, res) => {
   try {
-    const { ip, blid, password } = req.body;
-    
-    if (!ip || !blid || !password) {
-      return res.status(400).json({ error: 'Missing required fields: ip, blid, password' });
+    const validation = validateConnectBody(req.body || {});
+    if (!validation.ok) {
+    return sendError(res, 400, validation.errors.join(', '), 'bad_request', req.requestId);
     }
+
+    const { ip, blid, password } = req.body;
 
     // Disconnect existing client
     if (roombaClient) {
@@ -256,7 +377,7 @@ app.post('/api/connect', async (req, res) => {
     
     res.json({ success: true, message: 'Connected to Roomba' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+  return sendError(res, 500, error.message, 'connect_failed', req.requestId);
   }
 });
 
@@ -266,7 +387,7 @@ app.post('/api/disconnect', (req, res) => {
     roombaClient.disconnect();
     res.json({ success: true, message: 'Disconnected from Roomba' });
   } else {
-    res.status(400).json({ error: 'Not connected' });
+  return sendError(res, 400, 'Not connected', 'not_connected', req.requestId);
   }
 });
 
@@ -275,84 +396,68 @@ app.get('/api/state', (req, res) => {
   if (roombaClient) {
     res.json(roombaClient.getState());
   } else {
-    res.status(400).json({ error: 'Not connected to Roomba' });
+  return sendError(res, 400, 'Not connected to Roomba', 'not_connected', req.requestId);
   }
 });
 
 // Map snapshot for the most recent or active mission
 app.get('/api/map', (req, res) => {
   if (!analyticsStore) {
-    return res.status(503).json({ error: 'Analytics store unavailable' });
+  return sendError(res, 503, 'Analytics store unavailable', 'unavailable', req.requestId);
   }
 
-  const missionIdRaw = typeof req.query.missionId === 'string' ? req.query.missionId.trim() : null;
-  const missionId = missionIdRaw || currentMissionIdentifier();
-
-  const maxPointsRaw = req.query.maxPoints ?? req.query.maxSamples;
-  let maxPoints;
-  if (maxPointsRaw !== undefined) {
-    const parsed = parseInt(maxPointsRaw, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      return res.status(400).json({ error: 'Invalid maxPoints value' });
-    }
-    maxPoints = parsed;
+  const v = validateMapQuery(req.query || {});
+  if (!v.ok) {
+    return sendError(res, 400, v.errors.join(', '), 'bad_request', req.requestId);
   }
+  const missionId = v.missionId || currentMissionIdentifier();
+  const maxPoints = v.maxPoints;
 
   try {
     const mapData = analyticsStore.getMissionMap({ missionId, maxPoints });
     if (!mapData) {
-      return res.status(404).json({ error: 'No mission map data available' });
+  return sendError(res, 404, 'No mission map data available', 'not_found', req.requestId);
     }
     return res.json(mapData);
   } catch (error) {
     log('error', 'Failed to compute mission map:', error.message);
-    return res.status(500).json({ error: 'Failed to compute mission map' });
+  return sendError(res, 500, 'Failed to compute mission map', 'internal_error', req.requestId);
   }
 });
 
 // Analytics summary
 app.get('/api/analytics/summary', (req, res) => {
   if (!analyticsStore) {
-    return res.status(503).json({ error: 'Analytics store unavailable' });
+  return sendError(res, 503, 'Analytics store unavailable', 'unavailable', req.requestId);
   }
 
-  const rangeMsRaw = req.query.range ?? req.query.rangeMs;
-  const rangeMs = Math.min(
-    parseDurationToMs(rangeMsRaw, DEFAULT_ANALYTICS_RANGE_MS),
-    MAX_ANALYTICS_RANGE_MS
-  );
-
-  if (!Number.isFinite(rangeMs) || rangeMs <= 0) {
-    return res.status(400).json({ error: 'Invalid range value' });
+  const v = validateAnalyticsQuery(req.query || {}, { defaultRangeMs: DEFAULT_ANALYTICS_RANGE_MS });
+  if (!v.ok) {
+    return sendError(res, 400, v.errors.join(', '), 'bad_request', req.requestId);
   }
+  const rangeMs = Math.min(v.rangeMs, MAX_ANALYTICS_RANGE_MS);
 
   try {
     const summary = analyticsStore.getSummary({ rangeMs });
     res.json(summary);
   } catch (error) {
     log('error', 'Failed to compute analytics summary:', error.message);
-    res.status(500).json({ error: 'Failed to compute analytics summary' });
+  return sendError(res, 500, 'Failed to compute analytics summary', 'internal_error', req.requestId);
   }
 });
 
 // Analytics history buckets
 app.get('/api/analytics/history', (req, res) => {
   if (!analyticsStore) {
-    return res.status(503).json({ error: 'Analytics store unavailable' });
+  return sendError(res, 503, 'Analytics store unavailable', 'unavailable', req.requestId);
   }
 
-  const rangeMsRaw = req.query.range ?? req.query.rangeMs;
-  const computedRangeMs = parseDurationToMs(rangeMsRaw, DEFAULT_ANALYTICS_RANGE_MS);
-  const rangeMs = Math.min(
-    Number.isFinite(computedRangeMs) && computedRangeMs > 0 ? computedRangeMs : DEFAULT_ANALYTICS_RANGE_MS,
-    MAX_ANALYTICS_RANGE_MS
-  );
-
-  const bucketRaw = req.query.bucket ?? req.query.bucketMs;
-  const bucketSizeMs = bucketRaw ? parseDurationToMs(bucketRaw, null) : undefined;
-  if (bucketSizeMs !== undefined && (bucketSizeMs === null || !Number.isFinite(bucketSizeMs) || bucketSizeMs <= 0)) {
-    return res.status(400).json({ error: 'Invalid bucket value' });
+  const v = validateAnalyticsQuery(req.query || {}, { defaultRangeMs: DEFAULT_ANALYTICS_RANGE_MS });
+  if (!v.ok) {
+    return sendError(res, 400, v.errors.join(', '), 'bad_request', req.requestId);
   }
+  const rangeMs = Math.min(v.rangeMs, MAX_ANALYTICS_RANGE_MS);
+  const bucketSizeMs = v.bucketSizeMs;
 
   try {
     const history = analyticsStore.getHistory({
@@ -362,7 +467,7 @@ app.get('/api/analytics/history', (req, res) => {
     res.json(history);
   } catch (error) {
     log('error', 'Failed to compute analytics history:', error.message);
-    res.status(500).json({ error: 'Failed to compute analytics history' });
+  return sendError(res, 500, 'Failed to compute analytics history', 'internal_error', req.requestId);
   }
 });
 
@@ -370,23 +475,21 @@ app.get('/api/analytics/history', (req, res) => {
 app.post('/api/cleanRooms', async (req, res) => {
   try {
     if (!roombaClient || !roombaClient.connected) {
-      return res.status(400).json({ error: 'Not connected to Roomba' });
+      broadcast({ type: 'error', command: 'cleanRooms', requestId: req.requestId, message: 'Not connected to Roomba' });
+      addAudit({ requestId: req.requestId, command: 'cleanRooms', status: 'error', message: 'Not connected to Roomba' });
+      return sendError(res, 400, 'Not connected to Roomba', 'not_connected', req.requestId);
     }
-
     const body = req.body || {};
-    let regions = body.regions;
-
-    if (typeof regions === 'string') {
-      regions = [regions];
-    }
-
-    if (!Array.isArray(regions) || regions.length === 0) {
-      log('warn', 'Targeted clean request rejected: regions array missing or empty');
-      return res.status(400).json({ error: 'regions array is required' });
+    const v = validateCleanRoomsBody(body);
+    if (!v.ok) {
+      log('warn', 'Targeted clean request rejected:', v.errors.join(', '));
+      broadcast({ type: 'error', command: 'cleanRooms', requestId: req.requestId, message: v.errors.join(', ') });
+      addAudit({ requestId: req.requestId, command: 'cleanRooms', status: 'error', message: v.errors.join(', ') });
+      return sendError(res, 400, v.errors.join(', '), 'bad_request', req.requestId);
     }
 
     const options = {
-      regions,
+      regions: v.regions,
       ordered: body.ordered !== undefined ? !!body.ordered : true
     };
 
@@ -399,7 +502,7 @@ app.post('/api/cleanRooms', async (req, res) => {
     }
 
     log('info', 'Targeted clean request received', {
-      regionCount: regions.length,
+      regionCount: v.regions.length,
       ordered: options.ordered,
       explicitMapId: options.mapId ? true : false
     });
@@ -407,20 +510,26 @@ app.post('/api/cleanRooms', async (req, res) => {
     await roombaClient.cleanRooms(options);
 
     log('info', 'Targeted clean command dispatched', {
-      regionIds: regions.map((entry) => (typeof entry === 'object' && entry !== null
+      regionIds: v.regions.map((entry) => (typeof entry === 'object' && entry !== null
         ? entry.region_id || entry.regionId || entry.id
         : entry)),
       ordered: options.ordered
     });
 
-    return res.json({
+    const payload = {
       success: true,
       message: 'Targeted clean started',
-      regions: regions
-    });
+      regions: v.regions,
+      requestId: req.requestId
+    };
+    res.json(payload);
+    broadcast({ type: 'command', command: 'cleanRooms', requestId: req.requestId, payload: { regions: v.regions, ordered: options.ordered } });
+    addAudit({ requestId: req.requestId, command: 'cleanRooms', status: 'ok', payload: { regions: v.regions, ordered: options.ordered } });
   } catch (error) {
     log('error', 'Targeted clean failed:', error.message);
-    return res.status(500).json({ error: error.message });
+    broadcast({ type: 'error', command: 'cleanRooms', requestId: req.requestId, message: error.message });
+    addAudit({ requestId: req.requestId, command: 'cleanRooms', status: 'error', message: error.message });
+    return sendError(res, 500, error.message, 'command_failed', req.requestId);
   }
 });
 
@@ -428,12 +537,18 @@ app.post('/api/cleanRooms', async (req, res) => {
 app.post('/api/start', async (req, res) => {
   try {
     if (!roombaClient || !roombaClient.connected) {
-      return res.status(400).json({ error: 'Not connected to Roomba' });
+      broadcast({ type: 'error', command: 'start', requestId: req.requestId, message: 'Not connected to Roomba' });
+      addAudit({ requestId: req.requestId, command: 'start', status: 'error', message: 'Not connected to Roomba' });
+      return sendError(res, 400, 'Not connected to Roomba', 'not_connected', req.requestId);
     }
     await roombaClient.start();
-    res.json({ success: true, message: 'Cleaning started' });
+    res.json({ success: true, message: 'Cleaning started', requestId: req.requestId });
+    broadcast({ type: 'command', command: 'start', requestId: req.requestId });
+    addAudit({ requestId: req.requestId, command: 'start', status: 'ok' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    broadcast({ type: 'error', command: 'start', requestId: req.requestId, message: error.message });
+    addAudit({ requestId: req.requestId, command: 'start', status: 'error', message: error.message });
+    return sendError(res, 500, error.message, 'command_failed', req.requestId);
   }
 });
 
@@ -441,12 +556,18 @@ app.post('/api/start', async (req, res) => {
 app.post('/api/stop', async (req, res) => {
   try {
     if (!roombaClient || !roombaClient.connected) {
-      return res.status(400).json({ error: 'Not connected to Roomba' });
+      broadcast({ type: 'error', command: 'stop', requestId: req.requestId, message: 'Not connected to Roomba' });
+      addAudit({ requestId: req.requestId, command: 'stop', status: 'error', message: 'Not connected to Roomba' });
+      return sendError(res, 400, 'Not connected to Roomba', 'not_connected', req.requestId);
     }
     await roombaClient.stop();
-    res.json({ success: true, message: 'Cleaning stopped' });
+    res.json({ success: true, message: 'Cleaning stopped', requestId: req.requestId });
+    broadcast({ type: 'command', command: 'stop', requestId: req.requestId });
+    addAudit({ requestId: req.requestId, command: 'stop', status: 'ok' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    broadcast({ type: 'error', command: 'stop', requestId: req.requestId, message: error.message });
+    addAudit({ requestId: req.requestId, command: 'stop', status: 'error', message: error.message });
+    return sendError(res, 500, error.message, 'command_failed', req.requestId);
   }
 });
 
@@ -454,12 +575,18 @@ app.post('/api/stop', async (req, res) => {
 app.post('/api/pause', async (req, res) => {
   try {
     if (!roombaClient || !roombaClient.connected) {
-      return res.status(400).json({ error: 'Not connected to Roomba' });
+      broadcast({ type: 'error', command: 'pause', requestId: req.requestId, message: 'Not connected to Roomba' });
+      addAudit({ requestId: req.requestId, command: 'pause', status: 'error', message: 'Not connected to Roomba' });
+      return sendError(res, 400, 'Not connected to Roomba', 'not_connected', req.requestId);
     }
     await roombaClient.pause();
-    res.json({ success: true, message: 'Cleaning paused' });
+    res.json({ success: true, message: 'Cleaning paused', requestId: req.requestId });
+    broadcast({ type: 'command', command: 'pause', requestId: req.requestId });
+    addAudit({ requestId: req.requestId, command: 'pause', status: 'ok' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    broadcast({ type: 'error', command: 'pause', requestId: req.requestId, message: error.message });
+    addAudit({ requestId: req.requestId, command: 'pause', status: 'error', message: error.message });
+    return sendError(res, 500, error.message, 'command_failed', req.requestId);
   }
 });
 
@@ -467,12 +594,18 @@ app.post('/api/pause', async (req, res) => {
 app.post('/api/resume', async (req, res) => {
   try {
     if (!roombaClient || !roombaClient.connected) {
-      return res.status(400).json({ error: 'Not connected to Roomba' });
+      broadcast({ type: 'error', command: 'resume', requestId: req.requestId, message: 'Not connected to Roomba' });
+      addAudit({ requestId: req.requestId, command: 'resume', status: 'error', message: 'Not connected to Roomba' });
+      return sendError(res, 400, 'Not connected to Roomba', 'not_connected', req.requestId);
     }
     await roombaClient.resume();
-    res.json({ success: true, message: 'Cleaning resumed' });
+    res.json({ success: true, message: 'Cleaning resumed', requestId: req.requestId });
+    broadcast({ type: 'command', command: 'resume', requestId: req.requestId });
+    addAudit({ requestId: req.requestId, command: 'resume', status: 'ok' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    broadcast({ type: 'error', command: 'resume', requestId: req.requestId, message: error.message });
+    addAudit({ requestId: req.requestId, command: 'resume', status: 'error', message: error.message });
+    return sendError(res, 500, error.message, 'command_failed', req.requestId);
   }
 });
 
@@ -480,24 +613,157 @@ app.post('/api/resume', async (req, res) => {
 app.post('/api/dock', async (req, res) => {
   try {
     if (!roombaClient || !roombaClient.connected) {
-      return res.status(400).json({ error: 'Not connected to Roomba' });
+      broadcast({ type: 'error', command: 'dock', requestId: req.requestId, message: 'Not connected to Roomba' });
+      addAudit({ requestId: req.requestId, command: 'dock', status: 'error', message: 'Not connected to Roomba' });
+      return sendError(res, 400, 'Not connected to Roomba', 'not_connected', req.requestId);
     }
     await roombaClient.dock();
-    res.json({ success: true, message: 'Returning to dock' });
+    res.json({ success: true, message: 'Returning to dock', requestId: req.requestId });
+    broadcast({ type: 'command', command: 'dock', requestId: req.requestId });
+    addAudit({ requestId: req.requestId, command: 'dock', status: 'ok' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    broadcast({ type: 'error', command: 'dock', requestId: req.requestId, message: error.message });
+    addAudit({ requestId: req.requestId, command: 'dock', status: 'error', message: error.message });
+    return sendError(res, 500, error.message, 'command_failed', req.requestId);
   }
 });
 
-// Start server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  log('info', `🤖 Roomba Local Control Server running on port ${PORT}`);
-  log('info', `📱 Web interface: http://localhost:${PORT}`);
-  log('info', `🔌 WebSocket: ws://localhost:${PORT}`);
-  
-  // Initialize Roomba connection
-  initializeRoomba();
+function startServer(port = process.env.PORT || 3000) {
+  return new Promise((resolve, reject) => {
+    server.once('error', (err) => reject(err));
+    server.listen(port, () => {
+      const actualPort = server.address().port;
+      log('info', `🤖 Roomba Local Control Server running on port ${actualPort}`);
+      log('info', `📱 Web interface: http://localhost:${actualPort}`);
+      log('info', `🔌 WebSocket: ws://localhost:${actualPort}`);
+      initializeRoomba();
+      initScheduler();
+      resolve({ port: actualPort });
+    });
+  });
+}
+
+// Explicit stop helper for tests / controlled shutdown
+function stopServer() {
+  return new Promise((resolve) => {
+    try {
+      if (scheduler && typeof scheduler.dispose === 'function') {
+        scheduler.dispose();
+      }
+      if (roombaClient) {
+        try { roombaClient.disconnect(); } catch (e) { /* ignore */ }
+      }
+      // Close WebSocket server first to prevent new connections
+      try { wss.close(); } catch (e) { /* ignore */ }
+      server.close(() => {
+        log('info', 'Server stopped');
+        resolve();
+      });
+    } catch (e) {
+      log('error', 'Error during stopServer:', e.message);
+      resolve();
+    }
+  });
+}
+
+// Auto-start only when executed directly (not during tests/imports)
+if (require.main === module) {
+  startServer().catch(err => {
+    log('error', 'Failed to start server:', err.message);
+  });
+}
+
+// Commands audit endpoint
+const { parsePositiveInt } = require('./validation');
+app.get('/api/commands', (req, res) => {
+  const limit = parsePositiveInt(req.query.limit, 50) || 50;
+  const items = commandAudit.slice(-limit).reverse();
+  res.json({ items, total: commandAudit.length });
+});
+
+// Scheduling endpoints
+function validateScheduleCreate(body) {
+  const errors = [];
+  const action = body?.action;
+  const when = body?.when ?? body?.scheduledAt;
+  const payload = body?.payload;
+  const allowed = ['start', 'stop', 'pause', 'resume', 'dock', 'cleanRooms'];
+  if (!allowed.includes(action)) errors.push('Invalid or missing action');
+  let scheduledAt = null;
+  if (typeof when === 'number' && Number.isFinite(when)) {
+    scheduledAt = when;
+  } else if (typeof when === 'string' && when.trim()) {
+    const d = new Date(when);
+    if (!isNaN(d.getTime())) scheduledAt = d.getTime();
+  }
+  if (!scheduledAt) errors.push('Invalid or missing scheduled time');
+  let intervalMs = null;
+  if (body?.intervalMs !== undefined) {
+    const iv = Number(body.intervalMs);
+    if (!Number.isFinite(iv) || iv <= 0) errors.push('intervalMs must be a positive number');
+    else intervalMs = iv;
+  }
+  // Require payload for cleanRooms
+  if (action === 'cleanRooms') {
+    if (!payload || !Array.isArray(payload.regions) || payload.regions.length === 0) {
+      errors.push('cleanRooms requires payload.regions array');
+    }
+  }
+  return { ok: errors.length === 0, errors, action, scheduledAt, payload, intervalMs };
+}
+
+app.get('/api/schedules', (req, res) => {
+  if (!scheduler) return res.json({ items: [] });
+  const items = scheduler.list();
+  res.json({ items });
+});
+
+app.post('/api/schedules', (req, res) => {
+  try {
+    if (!scheduler) initScheduler();
+    const v = validateScheduleCreate(req.body || {});
+    if (!v.ok) {
+      return sendError(res, 400, v.errors.join(', '), 'bad_request', req.requestId);
+    }
+    const s = scheduler.create({ scheduledAt: v.scheduledAt, action: v.action, payload: v.payload, requestId: req.requestId });
+    if (v.intervalMs) scheduler.update(s.id, { intervalMs: v.intervalMs });
+    res.status(201).json({ schedule: s });
+  } catch (error) {
+    return sendError(res, 500, error.message, 'internal_error', req.requestId);
+  }
+});
+
+app.delete('/api/schedules/:id', (req, res) => {
+  if (!scheduler) return sendError(res, 404, 'Scheduler not initialized', 'not_found', req.requestId);
+  const s = scheduler.cancel(req.params.id);
+  if (!s) return sendError(res, 404, 'Schedule not found', 'not_found', req.requestId);
+  res.json({ schedule: s });
+});
+
+// Update schedule (pending only)
+app.patch('/api/schedules/:id', (req, res) => {
+  if (!scheduler) return sendError(res, 404, 'Scheduler not initialized', 'not_found', req.requestId);
+  const id = req.params.id;
+  const body = req.body || {};
+  const allowedActions = ['start', 'stop', 'pause', 'resume', 'dock', 'cleanRooms'];
+  const update = {};
+  if (body.when || body.scheduledAt) {
+    const when = body.when ?? body.scheduledAt;
+    if (typeof when === 'number' && Number.isFinite(when)) update.scheduledAt = when;
+    else if (typeof when === 'string' && when.trim()) {
+      const d = new Date(when);
+      if (!isNaN(d.getTime())) update.scheduledAt = d.getTime();
+    }
+  }
+  if (typeof body.action === 'string' && allowedActions.includes(body.action)) update.action = body.action;
+  if (body.payload !== undefined) update.payload = body.payload || null;
+  if (body.intervalMs !== undefined) {
+    const iv = Number(body.intervalMs);
+    update.intervalMs = Number.isFinite(iv) && iv > 0 ? iv : null;
+  }
+  const s = scheduler.update(id, update);
+  if (!s) return sendError(res, 404, 'Schedule not found', 'not_found', req.requestId);
+  res.json({ schedule: s });
 });
 
 // Graceful shutdown
@@ -511,3 +777,5 @@ process.on('SIGINT', () => {
     process.exit(0);
   });
 });
+
+module.exports = { app, startServer, stopServer };
