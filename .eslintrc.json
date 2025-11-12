@@ -1,4 +1,5 @@
 {
+  "root": true,
   "env": {
     "commonjs": true,
     "es2022": true,
@@ -8,15 +9,12 @@
   "parserOptions": {
     "ecmaVersion": 2022
   },
+  "ignorePatterns": ["var/**", "mobile-app/**", "public/**", "node_modules/**"],
   "rules": {
     "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
     "no-constant-condition": ["error", { "checkLoops": false }],
     "semi": ["warn", "always"],
-    "quotes": ["warn", "single", { "avoidEscape": true }]
-  },
-  "ignorePatterns": [
-    "var/**",
-    "mobile-app/**",
-    "node_modules/**"
-  ]
+    "quotes": ["warn", "single", { "avoidEscape": true }],
+    "no-console": "off"
+  }
 }

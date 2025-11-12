@@ -9,17 +9,20 @@
 - Extra knobs: `LOG_LEVEL` controls verbosity (`error|warn|info|debug`), `MQTT_KEEPALIVE_SEC` / `MQTT_RECONNECT_MS` tune MQTT, and `DISCOVERY_TIMEOUT_MS` adjusts `/api/discover` duration (override per call with `timeoutMs`).
 
 ## Runtime & Tooling
-- Install with `npm install`; run `npm run dev` (nodemon) during development, `npm start` for production run.
-- Server auto-inits a Roomba session on boot when `.env` credentials are present; otherwise `/api/connect` is manual path.
-- Web UI is static assets in `public/`; browsers hit same origin so no separate build step.
-- No automated tests yet (`npm test` is stub). Validate changes by hitting REST endpoints or watching WebSocket traffic (see `API.md`).
+ Automated tests exist (`node --test` via `npm test`) covering validation, state normalization, analytics, and scheduling (including recurring + updates). Keep them green; add tests alongside new features.
 
 ## Backend Patterns
-- `server/index.js` keeps a singleton `roombaClient`; reuse and guard any new logic behind existing `roombaClient` null/connected checks.
-- WebSocket clients live in `wsClients`; always use `broadcast()` to fan out robot events/errors.
-- REST handlers gate commands with `if (!roombaClient || !roombaClient.connected)`; mimic this guard for new control endpoints.
+ When adding features, update `README.md` / `SETUP.md` / `FEATURES.md` and scheduler/API docs in `API.md` if behavior or endpoints change so users stay unblocked.
 - Extend robot capabilities via `RoombaClient.sendCommand(command, params)`; respect AWS-style topic strings and JSON payload structure.
+## Scheduler Overview
+- JSON-persisted schedules file at `var/schedules.json`.
+- Endpoints: `GET/POST/PATCH/DELETE /api/schedules` with optional `intervalMs` for recurrence.
+- WebSocket `type: "schedule"` events for lifecycle (`created|executing|executed|failed|canceled|updated`).
+- Use `startServer()` / `stopServer()` helpers for integration tests; avoid auto-start by preserving `require.main === module` guard.
 - Mission/battery/bin parsing happens inside `updateState`; keep derived fields there so UI and API share the same shape.
+## CI
+- GitHub Actions workflow `ci.yml` runs lint and tests on push/PR against `main`.
+- Ensure changes pass `npm run lint` and `npm test` locally before pushing.
 
 ## Frontend Patterns
 - Single-page script `public/app.js` instantiates `RoombaApp`; manipulate DOM through cached element refs instead of repeated `document.getElementById`.

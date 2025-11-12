@@ -9,9 +9,9 @@ This guide will walk you through setting up the Roomba Local Control System from
 ### Node.js
 Download and install Node.js from [nodejs.org](https://nodejs.org/)
 
-Verify installation:
+Verify installation (Node 20 recommended):
 ```bash
-node --version  # Should be v14 or higher
+node --version  # Should be v18+ (20 recommended)
 npm --version
 ```
 
@@ -152,10 +152,11 @@ Try the basic controls:
 Run the automated checks to ensure everything is wired correctly:
 
 ```bash
-npm test
+npm test      # Node.js built-in test runner
+npm run lint  # ESLint static analysis
 ```
 
-This exercises the targeted-clean payload builder so regressions are caught early.
+Tests cover targeted-clean payload building, state normalization, analytics, and scheduling (including recurring + update flows). Linting enforces basic code quality standards.
 
 ## Common Setup Issues
 

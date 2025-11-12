@@ -1,5 +1,7 @@
 # Roomba j9+ Local Control System
 
+[![CI](https://github.com/and3rn3t/vac/actions/workflows/ci.yml/badge.svg)](https://github.com/and3rn3t/vac/actions/workflows/ci.yml)
+
 Control your Roomba j9+ robot vacuum locally without iRobot cloud services. This system allows you to access all sensors, features, and controls through a local network connection, ensuring your Roomba continues to work even when cloud services are no longer available.
 
 ## Features
@@ -260,6 +262,9 @@ npm run dev
 
 # Run unit tests
 npm test
+
+# Run lint
+npm run lint
 ```
 
 ### Adding Features
@@ -287,10 +292,37 @@ Contributions are welcome! Areas for improvement:
 
 - Enhanced mapping visualization
 - Room-specific cleaning
-- Schedule management
+- Advanced schedule management (enhancements)
 - Additional sensor data parsing
 - Mobile app development
 - Multi-robot support
+
+### Continuous Integration & Testing
+
+This repository includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that runs on pushes and pull requests targeting `main`:
+
+Steps performed:
+
+1. Install dependencies (`npm ci` when lockfile present)
+2. Run ESLint (`npm run lint`)
+3. Execute the Node test suite (`npm test`)
+
+Local verification before opening a PR:
+
+```bash
+npm install
+npm run lint
+npm test
+```
+
+Testing uses the built-in Node.js test runner (`node --test`). The server exports a `startServer()` helper and avoids auto-start when imported, enabling fast integration tests that bind to an ephemeral port. A `stopServer()` helper ensures clean shutdown between tests.
+
+If you add new features:
+
+- Prefer adding unit tests alongside the feature under `tests/`
+- Keep public API changes reflected in `API.md`
+- Update `FEATURES.md` / `SETUP.md` where relevant
+- Avoid hardcoding secrets; use `.env` pattern
 
 ## License
 

@@ -10,6 +10,13 @@ http://[server-ip]:3000/api
 
 Default: `http://localhost:3000/api`
 
+Scheduler endpoints (overview):
+
+- `GET /api/schedules` list all schedules
+- `POST /api/schedules` create a one-shot or recurring schedule (`intervalMs`)
+- `PATCH /api/schedules/:id` update pending schedule (time/action/payload/interval)
+- `DELETE /api/schedules/:id` cancel a pending schedule
+
 ## REST API Endpoints
 
 ### Server Configuration
@@ -116,7 +123,7 @@ GET /api/discover?timeoutMs=10000
     }
   ]
 }
-```
+```json
 
 **Notes:**
 
@@ -139,7 +146,7 @@ Content-Type: application/json
   "blid": "ABCDEF1234567890",
   "password": ":1:2345678901:AbCdEfGhIjKlMnOp"
 }
-```
+```json
 
 **Response (Success):**
 
@@ -148,7 +155,7 @@ Content-Type: application/json
   "success": true,
   "message": "Connected to Roomba"
 }
-```
+```json
 
 **Response (Error):**
 

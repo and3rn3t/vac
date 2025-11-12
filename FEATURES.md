@@ -230,10 +230,15 @@ Complete feature list for the Roomba j9+ Local Control System.
 
 ### Scheduling
 
-- Automated cleaning schedules
-- Recurring missions
-- Time-based rules
-- Calendar integration
+Implemented base scheduler with:
+
+- One-shot scheduled actions (start/stop/pause/resume/dock/cleanRooms)
+- Recurring schedules via `intervalMs`
+- Pending/executed/failed/canceled lifecycle tracking
+- Update & cancel operations through REST API
+- WebSocket broadcasts for all schedule events
+
+Future enhancements may add calendar integration & advanced rule logic.
 
 ### Multi-Robot Support
 
