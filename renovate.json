@@ -1,4 +1,1 @@
-{
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>and3rn3t/.github//renovate-config"]
-}
+{"$schema":"https://docs.renovatebot.com/renovate-schema.json","enabled":false}
